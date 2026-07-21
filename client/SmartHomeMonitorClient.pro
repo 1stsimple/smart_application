@@ -7,7 +7,8 @@ SOURCES += main.cpp \
            main_window.cpp \
            protocol_client.cpp \
            video_decoder.cpp
-HEADERS += main_window.h \
+HEADERS += client_theme.h \
+           main_window.h \
            protocol_client.h \
            video_decoder.h
 
