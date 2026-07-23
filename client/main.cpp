@@ -1,3 +1,4 @@
+#include "login_dialog.h"
 #include "main_window.h"
 
 #include <QApplication>
@@ -10,6 +11,13 @@ int main(int argc, char* argv[]) {
     application.setWindowIcon(QIcon(QStringLiteral(":/branding/app_icon.png")));
     QCoreApplication::setOrganizationName("SmartHomeMonitor");
     QCoreApplication::setApplicationName("SmartHomeMonitorClient");
-    MainWindow window; window.show();
+    application.setQuitOnLastWindowClosed(false);
+    LoginDialog login;
+    if (login.exec() != QDialog::Accepted) return 0;
+    ProtocolClient* authenticatedClient = login.takeAuthenticatedClient();
+    if (!authenticatedClient) return 1;
+    MainWindow window(authenticatedClient);
+    application.setQuitOnLastWindowClosed(true);
+    window.show();
     return application.exec();
 }

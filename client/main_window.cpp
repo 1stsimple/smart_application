@@ -29,6 +29,7 @@
 #include <QPushButton>
 #include <QResizeEvent>
 #include <QSettings>
+#include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStackedWidget>
@@ -40,6 +41,7 @@
 #include <QTreeWidgetItem>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QVideoWidget>
@@ -72,10 +74,13 @@ void setStatus(QLabel* label, const QString& text, const char* tone) {
 }
 }
 
-MainWindow::MainWindow(QWidget* parent)
-    : QMainWindow(parent), decoder_(new VideoDecoder), player_(this),
-      monitorSplitter_(0), liveView_(0), publisher_(new QProcess(this)),
-      shuttingDown_(false), layoutMaximized_(false) {
+MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
+    : QMainWindow(parent), protocol_(authenticatedClient ? authenticatedClient : new ProtocolClient),
+      decoder_(new VideoDecoder), player_(this),
+      deviceStack_(0), monitorSplitter_(0), liveView_(0), publisher_(new QProcess(this)),
+      shuttingDown_(false), layoutMaximized_(false),
+      authenticatedSession_(authenticatedClient != 0) {
+    protocol_->setParent(this);
     setWindowTitle(tr("智能家居监控系统"));
     resize(1360, 820);
     setMinimumSize(1180, 700);
@@ -130,13 +135,38 @@ MainWindow::MainWindow(QWidget* parent)
     devicesLayout->setSpacing(9);
     devicesLayout->addWidget(makeLabel(tr("设备列表"), "title"));
     devicesLayout->addWidget(makeLabel(tr("双击或选择通道后开始预览"), "subtitle"));
+    deviceStack_ = new QStackedWidget;
+    deviceStack_->setObjectName("deviceContentStack");
+    QWidget* deviceEmptyState = new QWidget;
+    deviceEmptyState->setObjectName("deviceEmptyState");
+    QVBoxLayout* deviceEmptyLayout = new QVBoxLayout(deviceEmptyState);
+    deviceEmptyLayout->setContentsMargins(22, 22, 22, 22);
+    deviceEmptyLayout->setSpacing(12);
+    deviceEmptyLayout->addStretch();
+    QLabel* emptyDeviceIcon = makeLabel(tr("⌂"), "emptyIcon");
+    emptyDeviceIcon->setAlignment(Qt::AlignCenter);
+    deviceEmptyLayout->addWidget(emptyDeviceIcon);
+    QLabel* emptyDeviceTitle = makeLabel(tr("暂无设备"), "emptyTitle");
+    emptyDeviceTitle->setAlignment(Qt::AlignCenter);
+    deviceEmptyLayout->addWidget(emptyDeviceTitle);
+    QLabel* emptyDeviceHint = makeLabel(tr("连接服务器后刷新设备，\n或通过设备配置添加设备。"), "emptyHint");
+    emptyDeviceHint->setAlignment(Qt::AlignCenter);
+    emptyDeviceHint->setWordWrap(true);
+    deviceEmptyLayout->addWidget(emptyDeviceHint);
+    QPushButton* emptyRefreshButton = new QPushButton(tr("刷新设备"));
+    emptyRefreshButton->setProperty("role", "softPrimary");
+    deviceEmptyLayout->addWidget(emptyRefreshButton, 0, Qt::AlignHCenter);
+    deviceEmptyLayout->addStretch();
     tree_ = new QTreeWidget;
     tree_->setHeaderLabels(QStringList() << tr("设备 / 通道") << tr("地址"));
     tree_->setAlternatingRowColors(true);
     tree_->setUniformRowHeights(true);
     tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     tree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-    devicesLayout->addWidget(tree_, 1);
+    deviceStack_->addWidget(deviceEmptyState);
+    deviceStack_->addWidget(tree_);
+    deviceStack_->setCurrentIndex(0);
+    devicesLayout->addWidget(deviceStack_, 1);
     monitorSplitter_->addWidget(devicesPanel_);
 
     QFrame* videoPanel = makeCard();
@@ -178,16 +208,22 @@ MainWindow::MainWindow(QWidget* parent)
     videoHeader->addWidget(previewExpandButton_);
     videoHeader->addWidget(previewMaximizeButton_);
     videoLayout->addLayout(videoHeader);
+    QFrame* videoFrame = new QFrame;
+    videoFrame->setObjectName("videoFrame");
+    QVBoxLayout* videoFrameLayout = new QVBoxLayout(videoFrame);
+    videoFrameLayout->setContentsMargins(8, 8, 8, 8);
+    videoFrameLayout->setSpacing(0);
     videoStack_ = new QStackedWidget;
     videoStack_->setObjectName("videoSurface");
-    liveView_ = new QLabel(tr("尚未开始预览\n\n请从左侧选择一个设备通道\n双击通道或点击工具栏“开始预览”"));
+    liveView_ = new QLabel(tr("◉\n\n尚未开始预览\n请选择左侧在线设备\n双击设备通道或点击“开始预览”"));
     liveView_->setObjectName("liveView");
     liveView_->setProperty("previewState", "idle");
     liveView_->setAlignment(Qt::AlignCenter);
     playbackView_ = new QVideoWidget;
     videoStack_->addWidget(liveView_);
     videoStack_->addWidget(playbackView_);
-    videoLayout->addWidget(videoStack_, 1);
+    videoFrameLayout->addWidget(videoStack_);
+    videoLayout->addWidget(videoFrame, 1);
     monitorSplitter_->addWidget(videoPanel);
 
     controlPanel_ = makeCard();
@@ -209,6 +245,7 @@ MainWindow::MainWindow(QWidget* parent)
         const QString command = commands[i];
         QPushButton* button = new QPushButton(directionLabels[i]);
         button->setProperty("role", "ptz");
+        button->setProperty("tone", command == QStringLiteral("stop") ? "stop" : "normal");
         ptzGrid->addWidget(button, i / 3, i % 3);
         connect(button, &QPushButton::clicked, this, [this, command] { sendPtz(command); });
     }
@@ -219,12 +256,24 @@ MainWindow::MainWindow(QWidget* parent)
     zoomLayout->addWidget(zoomOut);
     zoomLayout->addWidget(zoomIn);
     controlLayout->addLayout(zoomLayout);
-    speed_ = new QSpinBox;
+    controlLayout->addWidget(makeLabel(tr("云台速度"), "field"));
+    QHBoxLayout* speedLayout = new QHBoxLayout;
+    speedLayout->setSpacing(9);
+    speedLayout->addWidget(makeLabel(tr("慢"), "sliderEdge"));
+    speed_ = new QSlider(Qt::Horizontal);
+    speed_->setObjectName("ptzSpeedSlider");
     speed_->setRange(0, 100);
     speed_->setValue(50);
-    speed_->setPrefix(tr("云台速度  "));
-    controlLayout->addWidget(speed_);
+    speedLayout->addWidget(speed_, 1);
+    speedLayout->addWidget(makeLabel(tr("快"), "sliderEdge"));
+    QLabel* speedValue = makeLabel(QString::number(speed_->value()), "sliderValue");
+    speedValue->setAlignment(Qt::AlignCenter);
+    speedValue->setMinimumWidth(48);
+    speedLayout->addWidget(speedValue);
+    controlLayout->addLayout(speedLayout);
     controlLayout->addStretch();
+    connect(speed_, &QSlider::valueChanged, speedValue,
+            [speedValue](int value) { speedValue->setText(QString::number(value)); });
     connect(zoomIn, &QPushButton::clicked, this, [this] { sendPtz("zoom_in"); });
     connect(zoomOut, &QPushButton::clicked, this, [this] { sendPtz("zoom_out"); });
     monitorSplitter_->addWidget(controlPanel_);
@@ -374,7 +423,8 @@ MainWindow::MainWindow(QWidget* parent)
     QMenu* infoMenu = menuBar()->addMenu(tr("信息"));
     QAction* runtimeInfoAction = infoMenu->addAction(tr("连接与运行信息..."));
     QAction* aboutAction = infoMenu->addAction(tr("关于"));
-    connectionInfoAction_ = menuBar()->addAction(tr("● 未连接"));
+    connectionInfoAction_ = menuBar()->addAction(
+        authenticatedSession_ ? tr("● 已连接") : tr("● 未连接"));
     connectionInfoAction_->setToolTip(tr("查看连接与运行信息"));
 
     QToolBar* toolBar = addToolBar(tr("常用操作"));
@@ -389,9 +439,12 @@ MainWindow::MainWindow(QWidget* parent)
     toolBar->addSeparator();
     toolBar->addAction(recordAction);
     toolBar->addAction(stopRecordAction);
+    if (QToolButton* previewToolButton = qobject_cast<QToolButton*>(toolBar->widgetForAction(previewAction)))
+        previewToolButton->setProperty("role", "primary");
 
-    connectionStatus_ = makeLabel(tr("服务器：未连接"), "badge");
-    connectionStatus_->setProperty("tone", "neutral");
+    connectionStatus_ = makeLabel(
+        authenticatedSession_ ? tr("服务器：已连接") : tr("服务器：未连接"), "badge");
+    connectionStatus_->setProperty("tone", authenticatedSession_ ? "success" : "neutral");
     videoStatus_ = makeLabel(tr("画面：未预览"), "badge");
     videoStatus_->setProperty("tone", "neutral");
     publisherStatus_ = makeLabel(tr("推流：已停止"), "badge");
@@ -415,8 +468,8 @@ MainWindow::MainWindow(QWidget* parent)
     log(tr("客户端配置：%1").arg(QDir::toNativeSeparators(clientSettingsPath())));
 
     decoder_->moveToThread(&decoderThread_); connect(&decoderThread_, &QThread::finished, decoder_, &QObject::deleteLater);
-    connect(&protocol_, &ProtocolClient::videoMetadata, decoder_, &VideoDecoder::configure);
-    connect(&protocol_, &ProtocolClient::compressedVideoPacket, decoder_, &VideoDecoder::decode);
+    connect(protocol_, &ProtocolClient::videoMetadata, decoder_, &VideoDecoder::configure);
+    connect(protocol_, &ProtocolClient::compressedVideoPacket, decoder_, &VideoDecoder::decode);
     connect(decoder_, &VideoDecoder::frameReady, this, &MainWindow::showFrame);
     connect(decoder_, &VideoDecoder::decoderError, this, &MainWindow::log); decoderThread_.start();
     player_.setVideoOutput(playbackView_);
@@ -424,14 +477,15 @@ MainWindow::MainWindow(QWidget* parent)
     connect(connectButton, &QPushButton::clicked, this, [this] {
         saveSettings();
         setStatus(connectionStatus_, tr("服务器：连接中"), "warning");
-        protocol_.connectToServer(host_->text(), quint16(port_->text().toUShort())); });
+        protocol_->connectToServer(host_->text(), quint16(port_->text().toUShort())); });
     connect(registerButton, &QPushButton::clicked, this, [this] {
         saveSettings();
-        protocol_.registerUser(username_->text(), password_->text()); });
+        protocol_->registerUser(username_->text(), password_->text()); });
     connect(loginButton, &QPushButton::clicked, this, [this] {
         saveSettings();
-        protocol_.login(username_->text(), password_->text()); });
-    connect(refreshAction, &QAction::triggered, &protocol_, &ProtocolClient::requestCameras);
+        protocol_->login(username_->text(), password_->text()); });
+    connect(refreshAction, &QAction::triggered, protocol_, &ProtocolClient::requestCameras);
+    connect(emptyRefreshButton, &QPushButton::clicked, protocol_, &ProtocolClient::requestCameras);
     connect(save, &QPushButton::clicked, this, &MainWindow::saveCamera);
     connect(previewAction, &QAction::triggered, this, [this, previewAction] {
         playLive(); previewAction->setChecked(tree_->currentItem() && tree_->currentItem()->parent()); });
@@ -517,32 +571,32 @@ MainWindow::MainWindow(QWidget* parent)
     connect(aboutAction, &QAction::triggered, this, [this] {
         QMessageBox::about(this, tr("关于"), tr("智能家居监控系统\nQt Widgets 客户端 v2"));
     });
-    connect(&protocol_, &ProtocolClient::camerasReceived, this, &MainWindow::showCameras);
-    connect(&protocol_, &ProtocolClient::message, this, &MainWindow::log);
-    connect(&protocol_, &ProtocolClient::protocolError, this, &MainWindow::log);
-    connect(&protocol_, &ProtocolClient::registrationFinished, this, [this] {
+    connect(protocol_, &ProtocolClient::camerasReceived, this, &MainWindow::showCameras);
+    connect(protocol_, &ProtocolClient::message, this, &MainWindow::log);
+    connect(protocol_, &ProtocolClient::protocolError, this, &MainWindow::log);
+    connect(protocol_, &ProtocolClient::registrationFinished, this, [this] {
         statusBar()->showMessage(tr("注册成功，正在自动登录"), 5000);
         QMessageBox::information(this, tr("注册成功"),
             tr("账号注册成功。点击确定后，客户端将自动登录。"));
-        protocol_.login(username_->text(), password_->text());
+        protocol_->login(username_->text(), password_->text());
     });
-    connect(&protocol_, &ProtocolClient::authenticated, this, [this] {
+    connect(protocol_, &ProtocolClient::authenticated, this, [this] {
         statusBar()->showMessage(tr("登录成功，身份认证已完成"), 5000);
         QMessageBox::information(this, tr("登录成功"),
             tr("身份认证成功，现在可以刷新设备并开始预览。"));
     });
-    connect(&protocol_, &ProtocolClient::connected, this, [this] {
+    connect(protocol_, &ProtocolClient::connected, this, [this] {
         setStatus(connectionStatus_, tr("服务器：已连接"), "success");
         connectionInfoAction_->setText(tr("● 已连接"));
         log(tr("服务器已连接"));
         if (autoLogin_->isChecked() && !username_->text().isEmpty() && !password_->text().isEmpty())
-            protocol_.login(username_->text(), password_->text());
+            protocol_->login(username_->text(), password_->text());
     });
-    connect(&protocol_, &ProtocolClient::disconnected, this, [this] {
+    connect(protocol_, &ProtocolClient::disconnected, this, [this] {
         setStatus(connectionStatus_, tr("服务器：未连接"), "neutral");
         connectionInfoAction_->setText(tr("● 未连接"));
         log(tr("服务器已断开")); });
-    connect(&protocol_, &ProtocolClient::playbackUrlReceived, this, [this](const QUrl& url) {
+    connect(protocol_, &ProtocolClient::playbackUrlReceived, this, [this](const QUrl& url) {
         videoStack_->setCurrentWidget(playbackView_); player_.setMedia(QMediaContent(url)); player_.play();
         setStatus(videoStatus_, tr("画面：录像回放"), "info");
         log(tr("开始回放 %1").arg(url.toString())); });
@@ -570,15 +624,18 @@ MainWindow::MainWindow(QWidget* parent)
 
     QTimer::singleShot(500, this, [this] {
         if (autoPublish_->isChecked()) startWebcamPublisher();
-        if (autoLogin_->isChecked() && !host_->text().isEmpty())
-            protocol_.connectToServer(host_->text(), quint16(port_->text().toUShort()));
+        if (authenticatedSession_) {
+            protocol_->requestCameras();
+        } else if (autoLogin_->isChecked() && !host_->text().isEmpty()) {
+            protocol_->connectToServer(host_->text(), quint16(port_->text().toUShort()));
+        }
     });
 }
 
 MainWindow::~MainWindow() {
     saveSettings();
     shuttingDown_ = true; stopWebcamPublisher();
-    protocol_.stopStream(); decoderThread_.quit(); decoderThread_.wait();
+    protocol_->stopStream(); decoderThread_.quit(); decoderThread_.wait();
 }
 
 void MainWindow::loadSettings() {
@@ -798,6 +855,7 @@ void MainWindow::stopWebcamPublisher() {
 
 void MainWindow::showCameras(const QVector<CameraDeviceDto>& cameras) {
     cameras_ = cameras; tree_->clear();
+    deviceStack_->setCurrentIndex(cameras.isEmpty() ? 0 : 1);
     QSettings settings(clientSettingsPath(), QSettings::IniFormat);
     const quint32 savedCamera = settings.value("selection/cameraId", 0).toUInt();
     const quint32 savedChannel = settings.value("selection/channel", 0).toUInt();
@@ -844,28 +902,28 @@ void MainWindow::playLive() { CameraDeviceDto camera; quint32 channel;
     if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
     player_.stop(); videoStack_->setCurrentWidget(liveView_);
     setStatus(videoStatus_, tr("画面：实时预览"), "success");
-    protocol_.startStream(camera.id, selectedStream(camera)); }
-void MainWindow::stopLive() { protocol_.stopStream(); QMetaObject::invokeMethod(decoder_, "reset", Qt::QueuedConnection);
+    protocol_->startStream(camera.id, selectedStream(camera)); }
+void MainWindow::stopLive() { protocol_->stopStream(); QMetaObject::invokeMethod(decoder_, "reset", Qt::QueuedConnection);
     lastFrame_ = QImage(); liveView_->clear(); liveView_->setProperty("previewState", "idle");
     liveView_->style()->unpolish(liveView_); liveView_->style()->polish(liveView_);
-    liveView_->setText(tr("尚未开始预览\n\n请从左侧选择一个设备通道\n双击通道或点击工具栏“开始预览”"));
+    liveView_->setText(tr("◉\n\n尚未开始预览\n请选择左侧在线设备\n双击设备通道或点击“开始预览”"));
     setStatus(videoStatus_, tr("画面：未预览"), "neutral"); }
 void MainWindow::saveCamera() { CameraDeviceDto camera; camera.id = cameraId_->text().toUInt();
     camera.type = cameraType_->value(); camera.channels = channels_->value(); camera.serialNumber = serial_->text();
     camera.ip = cameraIp_->text(); camera.rtspUrl = rtsp_->text(); camera.rtmpUrl = rtmp_->text();
-    saveSettings(); protocol_.saveCamera(camera); }
+    saveSettings(); protocol_->saveCamera(camera); }
 void MainWindow::startRecording() { CameraDeviceDto camera; quint32 channel;
     if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
-    protocol_.startRecording(camera.id, channel, selectedStream(camera)); }
+    protocol_->startRecording(camera.id, channel, selectedStream(camera)); }
 void MainWindow::stopRecording() { CameraDeviceDto camera; quint32 channel;
     if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
-    protocol_.stopRecording(camera.id, channel); }
+    protocol_->stopRecording(camera.id, channel); }
 void MainWindow::playRecording() { CameraDeviceDto camera; quint32 channel;
     if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
     saveSettings(); setStatus(videoStatus_, tr("画面：请求回放"), "warning");
-    protocol_.requestPlayback(camera.id, channel, beginMs_->text().toLongLong(), endMs_->text().toLongLong()); }
+    protocol_->requestPlayback(camera.id, channel, beginMs_->text().toLongLong(), endMs_->text().toLongLong()); }
 void MainWindow::sendPtz(const QString& command) { CameraDeviceDto camera; quint32 channel;
-    if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; } protocol_.ptz(channel, command, speed_->value()); }
+    if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; } protocol_->ptz(channel, command, speed_->value()); }
 void MainWindow::log(const QString& text) {
     logView_->appendPlainText(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss ") + text);
 }

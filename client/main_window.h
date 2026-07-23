@@ -16,6 +16,7 @@ class QLineEdit;
 class QPlainTextEdit;
 class QProcess;
 class QPushButton;
+class QSlider;
 class QSpinBox;
 class QStackedWidget;
 class QSplitter;
@@ -27,7 +28,7 @@ class VideoDecoder;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(QWidget* parent = 0);
+    explicit MainWindow(ProtocolClient* authenticatedClient = 0, QWidget* parent = 0);
     ~MainWindow();
 protected:
     void resizeEvent(QResizeEvent* event);
@@ -57,12 +58,13 @@ private:
     void stopWebcamPublisher();
     QString ffmpegExecutable() const;
 
-    ProtocolClient protocol_;
+    ProtocolClient* protocol_;
     QVector<CameraDeviceDto> cameras_;
     QThread decoderThread_;
     VideoDecoder* decoder_;
     QMediaPlayer player_;
     QTreeWidget* tree_;
+    QStackedWidget* deviceStack_;
     QSplitter* monitorSplitter_;
     QWidget *devicesPanel_, *controlPanel_;
     QLabel* liveView_;
@@ -77,7 +79,8 @@ private:
     QLineEdit *host_, *port_, *username_, *password_;
     QLineEdit *cameraId_, *serial_, *cameraIp_, *rtsp_, *rtmp_;
     QLineEdit *webcamDevice_, *publishUrl_;
-    QSpinBox *cameraType_, *channels_, *speed_;
+    QSpinBox *cameraType_, *channels_;
+    QSlider* speed_;
     QLineEdit *beginMs_, *endMs_;
     QCheckBox *autoLogin_, *autoPublish_;
     QPushButton *publisherStart_, *publisherStop_;
@@ -85,6 +88,7 @@ private:
     QAction *connectionInfoAction_, *themeAction_;
     bool shuttingDown_;
     bool layoutMaximized_;
+    bool authenticatedSession_;
     QList<int> preMaximizeSizes_;
     QImage lastFrame_;
 };

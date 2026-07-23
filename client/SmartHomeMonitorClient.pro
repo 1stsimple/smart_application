@@ -4,10 +4,12 @@ TEMPLATE = app
 TARGET = SmartHomeMonitorClient
 
 SOURCES += main.cpp \
+           login_dialog.cpp \
            main_window.cpp \
            protocol_client.cpp \
            video_decoder.cpp
 HEADERS += client_theme.h \
+           login_dialog.h \
            main_window.h \
            protocol_client.h \
            video_decoder.h
