@@ -5,15 +5,16 @@
 
 #include <QMainWindow>
 #include <QMediaPlayer>
-#include <QImage>
 #include <QList>
-#include <QThread>
 
 class QLabel;
 class QAction;
 class QCheckBox;
+class QGridLayout;
+class QKeyEvent;
 class QLineEdit;
 class QPlainTextEdit;
+class QPoint;
 class QProcess;
 class QPushButton;
 class QSlider;
@@ -22,52 +23,61 @@ class QStackedWidget;
 class QSplitter;
 class QTreeWidget;
 class QVideoWidget;
-class QResizeEvent;
-class VideoDecoder;
+class QWidget;
+class VideoGridWidget;
+class VideoTileWidget;
+class PtzGearControl;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(ProtocolClient* authenticatedClient = 0, QWidget* parent = 0);
+    explicit MainWindow(ProtocolClient* authenticatedClient = 0,
+                        const QString& authenticatedHost = QString(),
+                        quint16 authenticatedPort = 0,
+                        const QString& authenticatedUsername = QString(),
+                        const QString& authenticatedPassword = QString(),
+                        QWidget* parent = 0);
     ~MainWindow();
 protected:
-    void resizeEvent(QResizeEvent* event);
+    void keyPressEvent(QKeyEvent* event);
 private slots:
     void showCameras(const QVector<CameraDeviceDto>& cameras);
-    void showFrame(const QImage& image);
     void playLive();
     void stopLive();
     void saveCamera();
     void startRecording();
     void stopRecording();
-    void playRecording();
     void log(const QString& text);
     void applyTheme(bool dark);
     void restoreDefaultMonitorLayout();
     void togglePreviewMaximized();
 private:
     bool selection(CameraDeviceDto& camera, quint32& channel) const;
+    bool activeSelection(CameraDeviceDto& camera, quint32& channel) const;
     QString selectedStream(const CameraDeviceDto& camera) const;
+    QString selectedStream(const CameraDeviceDto& camera, quint32 channel) const;
     void sendPtz(const QString& command);
     void loadSettings();
     void saveSettings() const;
     void adjustPreviewWidth(int direction);
     void updatePreviewLayoutButtons();
-    void updateLivePixmap();
+    void addDevice();
+    void showDeviceContextMenu(const QPoint& position);
+    void enterVideoFullScreen(VideoTileWidget* tile);
+    void exitVideoFullScreen();
     void startWebcamPublisher();
     void stopWebcamPublisher();
     QString ffmpegExecutable() const;
 
     ProtocolClient* protocol_;
     QVector<CameraDeviceDto> cameras_;
-    QThread decoderThread_;
-    VideoDecoder* decoder_;
     QMediaPlayer player_;
     QTreeWidget* tree_;
     QStackedWidget* deviceStack_;
     QSplitter* monitorSplitter_;
-    QWidget *devicesPanel_, *controlPanel_;
-    QLabel* liveView_;
+    QWidget *devicesPanel_, *controlPanel_, *videoHeader_;
+    VideoGridWidget* videoGrid_;
+    VideoTileWidget* fullScreenTile_;
     QLabel* connectionStatus_;
     QLabel* deviceCount_;
     QLabel* videoStatus_;
@@ -81,16 +91,19 @@ private:
     QLineEdit *webcamDevice_, *publishUrl_;
     QSpinBox *cameraType_, *channels_;
     QSlider* speed_;
-    QLineEdit *beginMs_, *endMs_;
     QCheckBox *autoLogin_, *autoPublish_;
+    QCheckBox* soundEffects_;
+    PtzGearControl* ptzGear_;
     QPushButton *publisherStart_, *publisherStop_;
     QPushButton *previewShrinkButton_, *previewExpandButton_, *previewMaximizeButton_;
     QAction *connectionInfoAction_, *themeAction_;
     bool shuttingDown_;
     bool layoutMaximized_;
     bool authenticatedSession_;
+    QString sessionHost_, sessionUsername_, sessionPassword_;
+    quint16 sessionPort_;
+    Qt::WindowStates preVideoFullScreenState_;
     QList<int> preMaximizeSizes_;
-    QImage lastFrame_;
 };
 
 #endif

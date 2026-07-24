@@ -25,6 +25,7 @@ public:
     virtual bool save(const CameraDevice& camera) = 0;
     virtual std::vector<CameraDevice> list() = 0;
     virtual bool find(std::uint32_t id, CameraDevice& output) = 0;
+    virtual bool erase(std::uint32_t id) = 0;
 };
 
 class InMemoryCameraRepository : public CameraRepository {
@@ -32,6 +33,7 @@ public:
     bool save(const CameraDevice& camera);
     std::vector<CameraDevice> list();
     bool find(std::uint32_t id, CameraDevice& output);
+    bool erase(std::uint32_t id);
 private:
     std::mutex mutex_;
     std::map<std::uint32_t, CameraDevice> cameras_;

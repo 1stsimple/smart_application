@@ -40,7 +40,12 @@ enum class TaskType : std::uint32_t {
     StopRecording,
     RecordingStatus,
     SaveCamera,
-    CameraSaved
+    CameraSaved,
+    QueryRecordingSegments,
+    RecordingSegments,
+    RecordingOperationResult,
+    DeleteCamera,
+    CameraDeleted
 };
 
 struct TlvPacket {

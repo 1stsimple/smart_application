@@ -150,8 +150,11 @@ bool RecordingProtocolHandler::handle(const TcpServer::ConnectionPtr& connection
         return true;
     }
     if (type == TaskType::RecordingStatus) {
-        connection->send(TlvPacket(TaskType::RecordingStatus,
-            manager_.status(camera, channel)));
+        const std::string state = manager_.status(camera, channel);
+        std::ostringstream result;
+        result << camera << ' ' << channel << ' '
+               << (state == "running" ? 1 : 0) << " 1 " << state;
+        connection->send(TlvPacket(TaskType::RecordingOperationResult, result.str()));
         return true;
     }
     std::string message;
@@ -166,8 +169,11 @@ bool RecordingProtocolHandler::handle(const TcpServer::ConnectionPtr& connection
     } else {
         success = manager_.stop(camera, channel, message);
     }
-    connection->send(TlvPacket(success ? TaskType::RecordingStatus : TaskType::Error,
-                               message));
+    std::ostringstream result;
+    result << camera << ' ' << channel << ' '
+           << ((type == TaskType::StartRecording && success) ? 1 : 0) << ' '
+           << (success ? 1 : 0) << ' ' << message;
+    connection->send(TlvPacket(TaskType::RecordingOperationResult, result.str()));
     return true;
 }
 

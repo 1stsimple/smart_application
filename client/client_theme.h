@@ -84,6 +84,8 @@ QPushButton[role="softPrimary"]:hover { background:#DCEEFF; border-color:#7CB8EB
 QPushButton[role="danger"] { background:#FFF1F1; color:#C24141; border-color:#F3C0C0; }
 QPushButton[role="danger"]:hover { background:#FDE7E7; border-color:#E89A9A; }
 QPushButton[role="danger"]:pressed, QPushButton[role="danger"]:checked { background:#DC6262; color:#FFFFFF; border-color:#C94E4E; }
+QPushButton[tone="recording"] { background:#DC2626; color:#FFFFFF; border-color:#B91C1C; }
+QPushButton[tone="recording"]:hover { background:#B91C1C; color:#FFFFFF; border-color:#991B1B; }
 QPushButton[role="ptz"] { font-size:17px; padding:7px; }
 QPushButton[role="ptz"][tone="stop"] { background:#FFF1F1; color:#C24141; border-color:#F3C0C0; }
 QPushButton[role="ptz"][tone="stop"]:hover { background:#FDE7E7; border-color:#E89A9A; }
@@ -100,6 +102,18 @@ QStackedWidget#videoSurface { background:#080D14; border-radius:7px; }
 QLabel#liveView { background:#080D14; border-radius:7px; color:#CBD5E1; }
 QLabel#liveView[previewState="idle"] { background:#080D14; color:#CBD5E1; font-size:17px; }
 QLabel#liveView[previewState="active"] { background:#080D14; color:#CBD5E1; }
+QWidget#videoGrid { background:#080D14; }
+QLabel#videoGridEmptyState { background:#080D14; color:#CBD5E1; font-size:17px; }
+QFrame#videoTile { background:#101827; border:2px solid #334155; border-radius:8px; }
+QFrame#videoTile[active="true"] { border:2px solid #38A7F2; }
+QFrame#videoTileHeader, QFrame#videoTileFooter { background:#162131; border:none; }
+QLabel#videoTileSurface { background:#05080C; color:#B9C6D5; border:none; }
+QLabel[role="videoTitle"] { color:#F4F7FB; font-weight:700; }
+QLabel[role="videoStatus"][tone="neutral"] { color:#AAB7C6; }
+QLabel[role="videoStatus"][tone="info"] { color:#7DC8F5; }
+QLabel[role="videoStatus"][tone="success"] { color:#72D6A7; }
+QLabel[role="videoStatus"][tone="warning"] { color:#F2B86B; }
+QLabel[role="videoHint"] { color:#8D9AAC; font-size:15px; }
 QSlider::groove:horizontal { height:6px; background:#DCE6EF; border-radius:3px; }
 QSlider::sub-page:horizontal { background:#1683E2; border-radius:3px; }
 QSlider::add-page:horizontal { background:#DCE6EF; border-radius:3px; }
@@ -199,6 +213,8 @@ QPushButton[role="softPrimary"]:hover { background:#2D465A; color:#D6F1F7; borde
 QPushButton[role="danger"] { background:#3B242F; color:#FFB0BA; border-color:#69404D; }
 QPushButton[role="danger"]:hover { background:#4A2C39; color:#FFD5DA; border-color:#915566; }
 QPushButton[role="danger"]:pressed, QPushButton[role="danger"]:checked { background:#934B54; color:#FFFFFF; border-color:#B66A72; }
+QPushButton[tone="recording"] { background:#B94955; color:#FFFFFF; border-color:#D66B76; }
+QPushButton[tone="recording"]:hover { background:#D05A66; color:#FFFFFF; border-color:#EF8791; }
 QPushButton[role="ptz"] { font-size:17px; padding:7px; }
 QPushButton[role="ptz"][tone="stop"] { background:#3B242F; color:#FFB0BA; border-color:#69404D; }
 QPushButton[role="ptz"][tone="stop"]:hover { background:#4A2C39; color:#FFD5DA; border-color:#915566; }
@@ -215,6 +231,18 @@ QStackedWidget#videoSurface { background:#070A0E; border-radius:7px; }
 QLabel#liveView { background:#070A0E; border-radius:7px; color:#C3CDD7; }
 QLabel#liveView[previewState="idle"] { background:#111827; color:#C3CDD7; font-size:17px; }
 QLabel#liveView[previewState="active"] { background:#05080B; color:#C3CDD7; }
+QWidget#videoGrid { background:#070A0E; }
+QLabel#videoGridEmptyState { background:#070A0E; color:#C3CDD7; font-size:17px; }
+QFrame#videoTile { background:#111626; border:2px solid #3B435B; border-radius:8px; }
+QFrame#videoTile[active="true"] { border:2px solid #72B7C2; }
+QFrame#videoTileHeader, QFrame#videoTileFooter { background:#1A2032; border:none; }
+QLabel#videoTileSurface { background:#030609; color:#C3CDD7; border:none; }
+QLabel[role="videoTitle"] { color:#F3F6FA; font-weight:700; }
+QLabel[role="videoStatus"][tone="neutral"] { color:#AAB5C4; }
+QLabel[role="videoStatus"][tone="info"] { color:#91D5E0; }
+QLabel[role="videoStatus"][tone="success"] { color:#8FE0BC; }
+QLabel[role="videoStatus"][tone="warning"] { color:#F5CB7A; }
+QLabel[role="videoHint"] { color:#8B96A8; font-size:15px; }
 QSlider::groove:horizontal { height:6px; background:#414960; border-radius:3px; }
 QSlider::sub-page:horizontal { background:#4C8A94; border-radius:3px; }
 QSlider::add-page:horizontal { background:#414960; border-radius:3px; }

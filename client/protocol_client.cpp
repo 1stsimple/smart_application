@@ -23,6 +23,12 @@ quint32 read32(const QByteArray& in, int& at) {
     return (quint32(p[0]) << 24) | (quint32(p[1]) << 16) |
            (quint32(p[2]) << 8) | p[3];
 }
+quint64 read64(const QByteArray& in, int& at) {
+    if (at < 0 || in.size() - at < 8) throw std::runtime_error("truncated uint64");
+    quint64 value = 0;
+    for (int i = 0; i < 8; ++i) value = (value << 8) | uchar(in.at(at++));
+    return value;
+}
 void appendText(QByteArray& out, const QString& text) {
     const QByteArray utf8 = text.toUtf8(); append32(out, quint32(utf8.size())); out.append(utf8);
 }
@@ -42,6 +48,7 @@ ProtocolClient::ProtocolClient(QObject* parent)
     // exposed by Windows (for example an automatic HTTP proxy configuration).
     socket_.setProxy(QNetworkProxy::NoProxy);
     qRegisterMetaType<QVector<CameraDeviceDto> >("QVector<CameraDeviceDto>");
+    qRegisterMetaType<QVector<RecordingSegmentDto> >("QVector<RecordingSegmentDto>");
     connect(&socket_, &QTcpSocket::connected, this, [this] {
         authenticated_ = false;
         emit connected();
@@ -87,6 +94,9 @@ void ProtocolClient::requestCameras() { sendAuthenticatedPacket(GetCameras); }
 void ProtocolClient::saveCamera(const CameraDeviceDto& camera) {
     sendAuthenticatedPacket(SaveCamera, encodeCamera(camera));
 }
+void ProtocolClient::deleteCamera(quint32 cameraId) {
+    sendAuthenticatedPacket(DeleteCamera, QByteArray::number(cameraId));
+}
 void ProtocolClient::startStream(quint32 id, const QString& url) {
     sendAuthenticatedPacket(GetStream, QByteArray::number(id) + " " + url.toUtf8());
 }
@@ -106,6 +116,12 @@ void ProtocolClient::stopRecording(quint32 id, quint32 channel) {
 void ProtocolClient::requestPlayback(quint32 id, quint32 channel, qint64 begin, qint64 end) {
     sendAuthenticatedPacket(GetPlaybackUrl, QByteArray::number(id) + " " + QByteArray::number(channel) +
                             " " + QByteArray::number(begin) + " " + QByteArray::number(end));
+}
+void ProtocolClient::requestRecordingSegments(quint32 id, quint32 channel,
+                                              qint64 begin, qint64 end) {
+    sendAuthenticatedPacket(QueryRecordingSegments,
+        QByteArray::number(id) + " " + QByteArray::number(channel) + " " +
+        QByteArray::number(begin) + " " + QByteArray::number(end));
 }
 void ProtocolClient::sendPacket(quint32 type, const QByteArray& value) {
     if (socket_.state() != QAbstractSocket::ConnectedState) {
@@ -145,9 +161,35 @@ void ProtocolClient::dispatch(quint32 type, const QByteArray& value) {
         if (type == LoginSection2Ok) { authOperation_ = NoAuth; authenticated_ = true; pendingPassword_.clear();
             emit authenticated(); emit message(tr("登录成功")); requestCameras(); return; }
         if (type == Cameras) { emit camerasReceived(decodeCameras(value)); return; }
+        if (type == CameraDeleted) {
+            bool ok = false;
+            const quint32 id = value.toUInt(&ok);
+            if (!ok || id == 0) throw std::runtime_error("invalid deleted camera id");
+            emit cameraDeleted(id);
+            emit message(tr("设备已删除"));
+            requestCameras();
+            return;
+        }
         if (type == StreamMetadata) { emit videoMetadata(value); return; }
         if (type == StreamPacket) { consumeFragment(value); return; }
         if (type == PlaybackUrl) { emit playbackUrlReceived(QUrl(QString::fromUtf8(value))); return; }
+        if (type == RecordingSegments) {
+            emit recordingSegmentsReceived(decodeRecordingSegments(value)); return;
+        }
+        if (type == RecordingOperationResult) {
+            QList<QByteArray> fields = value.split(' ');
+            if (fields.size() < 5) throw std::runtime_error("invalid recording result");
+            bool cameraOk = false, channelOk = false, activeOk = false, successOk = false;
+            const quint32 camera = fields.takeFirst().toUInt(&cameraOk);
+            const quint32 channel = fields.takeFirst().toUInt(&channelOk);
+            const int active = fields.takeFirst().toInt(&activeOk);
+            const int success = fields.takeFirst().toInt(&successOk);
+            if (!cameraOk || !channelOk || !activeOk || !successOk)
+                throw std::runtime_error("invalid recording result fields");
+            emit recordingOperationFinished(camera, channel, active != 0, success != 0,
+                                            QString::fromUtf8(fields.join(" ")));
+            return;
+        }
         if (type == Error || type == LoginSection1Error || type == LoginSection2Error ||
             type == RegisterSection1Error || type == RegisterSection2Error) {
             if (type != Error) { authOperation_ = NoAuth; pendingPassword_.clear(); }
@@ -193,6 +235,29 @@ QByteArray ProtocolClient::encodeCamera(const CameraDeviceDto& camera) const {
     QByteArray out; append32(out, 1); append32(out, camera.id); append32(out, camera.type);
     append32(out, camera.channels); appendText(out, camera.serialNumber); appendText(out, camera.ip);
     appendText(out, camera.rtspUrl); appendText(out, camera.rtmpUrl); return out;
+}
+QVector<RecordingSegmentDto> ProtocolClient::decodeRecordingSegments(const QByteArray& value) const {
+    int at = 0;
+    const quint32 count = read32(value, at);
+    if (count > 100000) throw std::runtime_error("too many recording segments");
+    QVector<RecordingSegmentDto> output;
+    output.reserve(int(count));
+    for (quint32 i = 0; i < count; ++i) {
+        RecordingSegmentDto segment;
+        segment.id = read64(value, at);
+        segment.cameraId = read32(value, at);
+        segment.channel = read32(value, at);
+        segment.startMs = qint64(read64(value, at));
+        segment.endMs = qint64(read64(value, at));
+        segment.sizeBytes = read64(value, at);
+        segment.discontinuity = read32(value, at) != 0;
+        segment.fileName = readText(value, at);
+        segment.downloadUrl = QUrl(readText(value, at));
+        segment.checksum = readText(value, at);
+        output.append(segment);
+    }
+    if (at != value.size()) throw std::runtime_error("trailing recording segment data");
+    return output;
 }
 QByteArray ProtocolClient::passwordDigest(const QByteArray& setting, const QString& password) {
     return QCryptographicHash::hash(setting + password.toUtf8(), QCryptographicHash::Md5).toHex();

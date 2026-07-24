@@ -158,6 +158,8 @@ int main() {
         client, smart_home::TaskType::PtzControl, "0 left 50 100");
     const smart_home::TlvPacket playback = exchange_packet(
         client, smart_home::TaskType::GetPlaybackUrl, "3 0 0 10000");
+    const smart_home::TlvPacket recording_list = exchange_packet(
+        client, smart_home::TaskType::QueryRecordingSegments, "3 0 0 10000");
     const std::vector<std::uint8_t> stream_request = smart_home::TlvCodec::encode(
         smart_home::TlvPacket(smart_home::TaskType::GetStream, "9 rtsp://camera/live"));
     ::send(client, reinterpret_cast<const char*>(&stream_request[0]),
@@ -201,6 +203,13 @@ int main() {
         ptz.text().find("200\n") != 0 || camera_http.last_url.find("command=left") == std::string::npos ||
         playback.type != static_cast<std::uint32_t>(smart_home::TaskType::PlaybackUrl) ||
         playback.text().find("/hls/vod?camera=3&channel=0&begin=0&end=10000") == std::string::npos ||
+        recording_list.type !=
+            static_cast<std::uint32_t>(smart_home::TaskType::RecordingSegments) ||
+        recording_list.value.size() < 4 ||
+        recording_list.value[0] != 0 || recording_list.value[1] != 0 ||
+        recording_list.value[2] != 0 || recording_list.value[3] != 1 ||
+        recording_list.text().find("camera-3.ts") == std::string::npos ||
+        recording_list.text().find("/media/") == std::string::npos ||
         !received_metadata || !received_packet) {
         std::cerr << "FAIL: end-to-end registration/login mismatch" << std::endl;
         return 1;

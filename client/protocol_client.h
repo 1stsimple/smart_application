@@ -20,6 +20,21 @@ struct CameraDeviceDto {
 Q_DECLARE_METATYPE(CameraDeviceDto)
 Q_DECLARE_METATYPE(QVector<CameraDeviceDto>)
 
+struct RecordingSegmentDto {
+    quint64 id;
+    quint32 cameraId;
+    quint32 channel;
+    qint64 startMs;
+    qint64 endMs;
+    quint64 sizeBytes;
+    bool discontinuity;
+    QString fileName;
+    QUrl downloadUrl;
+    QString checksum;
+};
+Q_DECLARE_METATYPE(RecordingSegmentDto)
+Q_DECLARE_METATYPE(QVector<RecordingSegmentDto>)
+
 class ProtocolClient : public QObject {
     Q_OBJECT
 public:
@@ -32,7 +47,8 @@ public:
         StreamPacket, StopStream, CameraHttpRequest, CameraHttpResponse,
         PtzControl, GetRecordings, Recordings, Error, GetPlaybackUrl,
         PlaybackUrl, StartRecording, StopRecording, RecordingStatus,
-        SaveCamera, CameraSaved
+        SaveCamera, CameraSaved, QueryRecordingSegments, RecordingSegments,
+        RecordingOperationResult, DeleteCamera, CameraDeleted
     };
 
     explicit ProtocolClient(QObject* parent = 0);
@@ -42,6 +58,7 @@ public:
     void login(const QString& username, const QString& password);
     void requestCameras();
     void saveCamera(const CameraDeviceDto& camera);
+    void deleteCamera(quint32 cameraId);
     void startStream(quint32 cameraId, const QString& url);
     void stopStream();
     void ptz(quint32 channel, const QString& command, int speed);
@@ -49,6 +66,8 @@ public:
     void stopRecording(quint32 cameraId, quint32 channel);
     void requestPlayback(quint32 cameraId, quint32 channel,
                          qint64 beginMs, qint64 endMs);
+    void requestRecordingSegments(quint32 cameraId, quint32 channel,
+                                  qint64 beginMs, qint64 endMs);
 
 signals:
     void connected();
@@ -56,9 +75,13 @@ signals:
     void authenticated();
     void registrationFinished();
     void camerasReceived(const QVector<CameraDeviceDto>& cameras);
+    void cameraDeleted(quint32 cameraId);
     void videoMetadata(const QByteArray& data);
     void compressedVideoPacket(const QByteArray& data);
     void playbackUrlReceived(const QUrl& url);
+    void recordingSegmentsReceived(const QVector<RecordingSegmentDto>& segments);
+    void recordingOperationFinished(quint32 cameraId, quint32 channel,
+                                    bool active, bool success, const QString& message);
     void message(const QString& text);
     void protocolError(const QString& text);
 
@@ -74,6 +97,7 @@ private:
     void dispatch(quint32 type, const QByteArray& value);
     void consumeFragment(const QByteArray& value);
     QVector<CameraDeviceDto> decodeCameras(const QByteArray& value) const;
+    QVector<RecordingSegmentDto> decodeRecordingSegments(const QByteArray& value) const;
     QByteArray encodeCamera(const CameraDeviceDto& camera) const;
     static QByteArray passwordDigest(const QByteArray& setting, const QString& password);
 

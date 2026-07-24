@@ -151,4 +151,17 @@ bool MysqlCameraRepository::find(std::uint32_t camera_id, CameraDevice& output) 
     return true;
 }
 
+bool MysqlCameraRepository::erase(std::uint32_t camera_id) {
+    if (camera_id == 0) return false;
+    std::lock_guard<std::mutex> lock(implementation_->mutex);
+    CameraStatement statement(&implementation_->connection,
+        "DELETE FROM cameras WHERE id=?");
+    unsigned long long id = camera_id;
+    MYSQL_BIND parameter[1];
+    number_parameter(parameter[0], MYSQL_TYPE_LONGLONG, id);
+    if (mysql_stmt_bind_param(statement.value, parameter) != 0 ||
+        mysql_stmt_execute(statement.value) != 0) fail(statement.value, "delete");
+    return mysql_stmt_affected_rows(statement.value) > 0;
+}
+
 }  // namespace smart_home
