@@ -79,13 +79,20 @@ void setStatus(QLabel* label, const QString& text, const char* tone) {
 }
 }
 
-MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
+MainWindow::MainWindow(ProtocolClient* authenticatedClient,
+                       const QString& authenticatedHost,
+                       quint16 authenticatedPort,
+                       const QString& authenticatedUsername,
+                       const QString& authenticatedPassword,
+                       QWidget* parent)
     : QMainWindow(parent), protocol_(authenticatedClient ? authenticatedClient : new ProtocolClient),
       player_(this), deviceStack_(0), monitorSplitter_(0), videoHeader_(0),
       videoGrid_(0), fullScreenTile_(0),
       publisher_(new QProcess(this)),
       shuttingDown_(false), layoutMaximized_(false),
-      authenticatedSession_(authenticatedClient != 0) {
+      authenticatedSession_(authenticatedClient != 0),
+      sessionHost_(authenticatedHost), sessionUsername_(authenticatedUsername),
+      sessionPassword_(authenticatedPassword), sessionPort_(authenticatedPort) {
     protocol_->setParent(this);
     setWindowTitle(tr("智能家居监控系统"));
     resize(1360, 820);
@@ -480,6 +487,12 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     statusBar()->addPermanentWidget(publisherStatus_);
 
     loadSettings();
+    if (authenticatedSession_) {
+        host_->setText(sessionHost_);
+        port_->setText(QString::number(sessionPort_));
+        username_->setText(sessionUsername_);
+        password_->setText(sessionPassword_);
+    }
     applyTheme(themeAction_->isChecked());
     QTimer::singleShot(0, this, [this] {
         QSettings settings(clientSettingsPath(), QSettings::IniFormat);
@@ -501,6 +514,10 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
         protocol_->registerUser(username_->text(), password_->text()); });
     connect(loginButton, &QPushButton::clicked, this, [this] {
         saveSettings();
+        sessionHost_ = host_->text().trimmed();
+        sessionPort_ = quint16(port_->text().toUShort());
+        sessionUsername_ = username_->text().trimmed();
+        sessionPassword_ = password_->text();
         protocol_->login(username_->text(), password_->text()); });
     connect(refreshAction, &QAction::triggered, protocol_, &ProtocolClient::requestCameras);
     connect(emptyRefreshButton, &QPushButton::clicked, protocol_, &ProtocolClient::requestCameras);
@@ -673,7 +690,13 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
         connectionInfoAction_->setText(tr("● 已连接"));
         log(tr("服务器已连接"));
         if (autoLogin_->isChecked() && !username_->text().isEmpty() && !password_->text().isEmpty())
+        {
+            sessionHost_ = host_->text().trimmed();
+            sessionPort_ = quint16(port_->text().toUShort());
+            sessionUsername_ = username_->text().trimmed();
+            sessionPassword_ = password_->text();
             protocol_->login(username_->text(), password_->text());
+        }
     });
     connect(protocol_, &ProtocolClient::disconnected, this, [this] {
         setStatus(connectionStatus_, tr("服务器：未连接"), "neutral");
@@ -964,8 +987,8 @@ void MainWindow::showDeviceContextMenu(const QPoint& position) {
         quint32 channel = 0;
         if (selection(camera, channel)) {
             videoGrid_->removePreview(camera.id, channel);
-            videoGrid_->addPreview(camera, channel, host_->text(), quint16(port_->text().toUShort()),
-                                   username_->text(), password_->text());
+            videoGrid_->addPreview(camera, channel, sessionHost_, sessionPort_,
+                                   sessionUsername_, sessionPassword_);
         }
     } else if (chosen == information) {
         const quint32 id = item->data(0, Qt::UserRole).toUInt();
@@ -1097,8 +1120,8 @@ void MainWindow::playLive() { CameraDeviceDto camera; quint32 channel;
     }
     player_.stop();
     videoStack_->setCurrentWidget(videoGrid_);
-    videoGrid_->addPreview(camera, channel, host_->text(), quint16(port_->text().toUShort()),
-                           username_->text(), password_->text()); }
+    videoGrid_->addPreview(camera, channel, sessionHost_, sessionPort_,
+                           sessionUsername_, sessionPassword_); }
 void MainWindow::stopLive() {
     VideoTileWidget* tile = videoGrid_ ? videoGrid_->activeTile() : 0;
     if (!tile) { log(tr("请先选择一个正在预览的视频格子")); return; }

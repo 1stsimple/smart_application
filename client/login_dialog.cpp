@@ -388,6 +388,22 @@ ProtocolClient* LoginDialog::takeAuthenticatedClient() {
     return result;
 }
 
+QString LoginDialog::authenticatedHost() const {
+    return host_->text().trimmed();
+}
+
+quint16 LoginDialog::authenticatedPort() const {
+    return quint16(port_->text().toUShort());
+}
+
+QString LoginDialog::authenticatedUsername() const {
+    return username_->text().trimmed();
+}
+
+QString LoginDialog::authenticatedPassword() const {
+    return password_->text();
+}
+
 void LoginDialog::loadSettings() {
     QSettings settings(loginSettingsPath(), QSettings::IniFormat);
     host_->setText(settings.value("connection/host", "127.0.0.1").toString());

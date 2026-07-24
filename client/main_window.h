@@ -31,7 +31,12 @@ class PtzGearControl;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
-    explicit MainWindow(ProtocolClient* authenticatedClient = 0, QWidget* parent = 0);
+    explicit MainWindow(ProtocolClient* authenticatedClient = 0,
+                        const QString& authenticatedHost = QString(),
+                        quint16 authenticatedPort = 0,
+                        const QString& authenticatedUsername = QString(),
+                        const QString& authenticatedPassword = QString(),
+                        QWidget* parent = 0);
     ~MainWindow();
 protected:
     void keyPressEvent(QKeyEvent* event);
@@ -95,6 +100,8 @@ private:
     bool shuttingDown_;
     bool layoutMaximized_;
     bool authenticatedSession_;
+    QString sessionHost_, sessionUsername_, sessionPassword_;
+    quint16 sessionPort_;
     Qt::WindowStates preVideoFullScreenState_;
     QList<int> preMaximizeSizes_;
 };

@@ -18,6 +18,10 @@ class LoginDialog : public QDialog {
 public:
     explicit LoginDialog(QWidget* parent = 0);
     ProtocolClient* takeAuthenticatedClient();
+    QString authenticatedHost() const;
+    quint16 authenticatedPort() const;
+    QString authenticatedUsername() const;
+    QString authenticatedPassword() const;
 
 private slots:
     void beginLogin();
