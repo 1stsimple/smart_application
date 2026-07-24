@@ -17,6 +17,7 @@ public:
     bool save(const CameraDevice& camera);
     std::vector<CameraDevice> list();
     bool find(std::uint32_t id, CameraDevice& output);
+    bool erase(std::uint32_t id);
 private:
     struct Implementation;
     std::unique_ptr<Implementation> implementation_;

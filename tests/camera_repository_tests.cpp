@@ -22,7 +22,8 @@ int main() {
         std::vector<std::uint8_t> truncated(bytes.begin(), bytes.end() - 1);
         smart_home::deserialize_cameras(truncated);
     } catch (...) { rejected = true; }
-    if (!rejected) return 1;
+    if (!rejected || !repository.erase(7) || repository.find(7, found) ||
+        repository.erase(7)) return 1;
     std::cout << "Camera repository and wire test passed" << std::endl;
     return 0;
 }

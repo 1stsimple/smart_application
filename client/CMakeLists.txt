@@ -8,14 +8,24 @@ endif()
 
 add_executable(SmartHomeMonitorClient WIN32
     main.cpp
+    add_device_dialog.cpp
     login_dialog.cpp
     main_window.cpp
+    ptz_gear_control.cpp
     protocol_client.cpp
+    recording_browser_dialog.cpp
+    video_grid_widget.cpp
+    video_tile_widget.cpp
     video_decoder.cpp
+    add_device_dialog.h
     client_theme.h
     login_dialog.h
     main_window.h
+    ptz_gear_control.h
     protocol_client.h
+    recording_browser_dialog.h
+    video_grid_widget.h
+    video_tile_widget.h
     video_decoder.h
     ${CLIENT_RESOURCES}
 )

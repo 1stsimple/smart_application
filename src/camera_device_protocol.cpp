@@ -24,6 +24,16 @@ bool CameraDeviceProtocolHandler::handle(const TcpServer::ConnectionPtr& connect
                                        std::to_string(cameras[0].id)));
             return true;
         }
+        if (packet.type == static_cast<std::uint32_t>(TaskType::DeleteCamera)) {
+            const std::string text = packet.text();
+            std::size_t consumed = 0;
+            const unsigned long id = std::stoul(text, &consumed);
+            if (consumed != text.size() || id == 0 || id > 0xffffffffUL ||
+                !repository_.erase(static_cast<std::uint32_t>(id)))
+                throw std::invalid_argument("camera not found");
+            connection->send(TlvPacket(TaskType::CameraDeleted, text));
+            return true;
+        }
         return false;
     } catch (const std::exception& error) {
         connection->send(TlvPacket(TaskType::Error, error.what()));

@@ -1,6 +1,10 @@
 #include "main_window.h"
+#include "add_device_dialog.h"
 #include "client_theme.h"
-#include "video_decoder.h"
+#include "ptz_gear_control.h"
+#include "recording_browser_dialog.h"
+#include "video_grid_widget.h"
+#include "video_tile_widget.h"
 
 #include <QAction>
 #include <QApplication>
@@ -17,6 +21,7 @@
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QImage>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
@@ -76,8 +81,9 @@ void setStatus(QLabel* label, const QString& text, const char* tone) {
 
 MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     : QMainWindow(parent), protocol_(authenticatedClient ? authenticatedClient : new ProtocolClient),
-      decoder_(new VideoDecoder), player_(this),
-      deviceStack_(0), monitorSplitter_(0), liveView_(0), publisher_(new QProcess(this)),
+      player_(this), deviceStack_(0), monitorSplitter_(0), videoHeader_(0),
+      videoGrid_(0), fullScreenTile_(0),
+      publisher_(new QProcess(this)),
       shuttingDown_(false), layoutMaximized_(false),
       authenticatedSession_(authenticatedClient != 0) {
     protocol_->setParent(this);
@@ -112,12 +118,6 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     publisherStop_ = new QPushButton(tr("停止推流"));
     publisherStop_->setProperty("role", "danger");
 
-    beginMs_ = new QLineEdit;
-    endMs_ = new QLineEdit;
-    const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    beginMs_->setText(QString::number(now - 3600000));
-    endMs_->setText(QString::number(now));
-
     QWidget* central = new QWidget(this);
     central->setObjectName("centralPanel");
     QVBoxLayout* root = new QVBoxLayout(central);
@@ -133,7 +133,18 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     QVBoxLayout* devicesLayout = new QVBoxLayout(devicesPanel_);
     devicesLayout->setContentsMargins(14, 13, 14, 14);
     devicesLayout->setSpacing(9);
-    devicesLayout->addWidget(makeLabel(tr("设备列表"), "title"));
+    QAction* addDeviceAction = new QAction(tr("添加设备…"), this);
+    addDeviceAction->setShortcut(QKeySequence("Ctrl+N"));
+    QHBoxLayout* deviceHeader = new QHBoxLayout;
+    deviceHeader->addWidget(makeLabel(tr("设备列表"), "title"));
+    deviceHeader->addStretch();
+    QToolButton* addDeviceToolButton = new QToolButton;
+    addDeviceToolButton->setDefaultAction(addDeviceAction);
+    addDeviceToolButton->setText(tr("+ 添加"));
+    addDeviceToolButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    addDeviceToolButton->setProperty("role", "softPrimary");
+    deviceHeader->addWidget(addDeviceToolButton);
+    devicesLayout->addLayout(deviceHeader);
     devicesLayout->addWidget(makeLabel(tr("双击或选择通道后开始预览"), "subtitle"));
     deviceStack_ = new QStackedWidget;
     deviceStack_->setObjectName("deviceContentStack");
@@ -156,11 +167,18 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     QPushButton* emptyRefreshButton = new QPushButton(tr("刷新设备"));
     emptyRefreshButton->setProperty("role", "softPrimary");
     deviceEmptyLayout->addWidget(emptyRefreshButton, 0, Qt::AlignHCenter);
+    QToolButton* emptyAddButton = new QToolButton;
+    emptyAddButton->setDefaultAction(addDeviceAction);
+    emptyAddButton->setText(tr("添加设备"));
+    emptyAddButton->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    emptyAddButton->setProperty("role", "primary");
+    deviceEmptyLayout->addWidget(emptyAddButton, 0, Qt::AlignHCenter);
     deviceEmptyLayout->addStretch();
     tree_ = new QTreeWidget;
     tree_->setHeaderLabels(QStringList() << tr("设备 / 通道") << tr("地址"));
     tree_->setAlternatingRowColors(true);
     tree_->setUniformRowHeights(true);
+    tree_->setContextMenuPolicy(Qt::CustomContextMenu);
     tree_->header()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
     tree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
     deviceStack_->addWidget(deviceEmptyState);
@@ -175,7 +193,9 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     QVBoxLayout* videoLayout = new QVBoxLayout(videoPanel);
     videoLayout->setContentsMargins(14, 13, 14, 14);
     videoLayout->setSpacing(10);
-    QHBoxLayout* videoHeader = new QHBoxLayout;
+    videoHeader_ = new QWidget;
+    QHBoxLayout* videoHeader = new QHBoxLayout(videoHeader_);
+    videoHeader->setContentsMargins(0, 0, 0, 0);
     QVBoxLayout* videoWords = new QVBoxLayout;
     videoWords->setSpacing(1);
     videoWords->addWidget(makeLabel(tr("实时监控"), "title"));
@@ -207,7 +227,7 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     videoHeader->addWidget(previewDefaultButton);
     videoHeader->addWidget(previewExpandButton_);
     videoHeader->addWidget(previewMaximizeButton_);
-    videoLayout->addLayout(videoHeader);
+    videoLayout->addWidget(videoHeader_);
     QFrame* videoFrame = new QFrame;
     videoFrame->setObjectName("videoFrame");
     QVBoxLayout* videoFrameLayout = new QVBoxLayout(videoFrame);
@@ -215,12 +235,9 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     videoFrameLayout->setSpacing(0);
     videoStack_ = new QStackedWidget;
     videoStack_->setObjectName("videoSurface");
-    liveView_ = new QLabel(tr("◉\n\n尚未开始预览\n请选择左侧在线设备\n双击设备通道或点击“开始预览”"));
-    liveView_->setObjectName("liveView");
-    liveView_->setProperty("previewState", "idle");
-    liveView_->setAlignment(Qt::AlignCenter);
+    videoGrid_ = new VideoGridWidget;
     playbackView_ = new QVideoWidget;
-    videoStack_->addWidget(liveView_);
+    videoStack_->addWidget(videoGrid_);
     videoStack_->addWidget(playbackView_);
     videoFrameLayout->addWidget(videoStack_);
     videoLayout->addWidget(videoFrame, 1);
@@ -233,7 +250,14 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     controlLayout->setContentsMargins(14, 13, 14, 14);
     controlLayout->setSpacing(10);
     controlLayout->addWidget(makeLabel(tr("设备控制"), "title"));
-    controlLayout->addWidget(makeLabel(tr("云台方向、变焦与速度"), "subtitle"));
+    controlLayout->addWidget(makeLabel(tr("拖动齿轮控制方向，释放后自动停止"), "subtitle"));
+    ptzGear_ = new PtzGearControl;
+    ptzGear_->setEnabled(false);
+    controlLayout->addWidget(ptzGear_, 0, Qt::AlignHCenter);
+    soundEffects_ = new QCheckBox(tr("界面机械音效"));
+    soundEffects_->setChecked(true);
+    controlLayout->addWidget(soundEffects_, 0, Qt::AlignHCenter);
+    controlLayout->addWidget(makeLabel(tr("备用方向按钮"), "field"));
     QGridLayout* ptzGrid = new QGridLayout;
     ptzGrid->setHorizontalSpacing(8);
     ptzGrid->setVerticalSpacing(8);
@@ -274,6 +298,21 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     controlLayout->addStretch();
     connect(speed_, &QSlider::valueChanged, speedValue,
             [speedValue](int value) { speedValue->setText(QString::number(value)); });
+    connect(ptzGear_, &PtzGearControl::speedSuggested, speed_, &QSlider::setValue);
+    connect(ptzGear_, &PtzGearControl::commandStarted, this,
+            [this](const QString& command, int speed) {
+        CameraDeviceDto camera;
+        quint32 channel = 0;
+        if (!activeSelection(camera, channel) || camera.type == 0) return;
+        protocol_->ptz(channel, command, speed);
+    });
+    connect(ptzGear_, &PtzGearControl::stopRequested, this, [this] {
+        CameraDeviceDto camera;
+        quint32 channel = 0;
+        if (!activeSelection(camera, channel) || camera.type == 0) return;
+        protocol_->ptz(channel, QStringLiteral("stop"), speed_->value());
+    });
+    connect(soundEffects_, &QCheckBox::toggled, ptzGear_, &PtzGearControl::setSoundEnabled);
     connect(zoomIn, &QPushButton::clicked, this, [this] { sendPtz("zoom_in"); });
     connect(zoomOut, &QPushButton::clicked, this, [this] { sendPtz("zoom_out"); });
     monitorSplitter_->addWidget(controlPanel_);
@@ -362,24 +401,6 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     publisherLayout->addLayout(publisherButtons);
     publisherLayout->addStretch();
 
-    QDialog* playbackDialog = new QDialog(this);
-    playbackDialog->setWindowTitle(tr("录像回放"));
-    playbackDialog->setAttribute(Qt::WA_QuitOnClose, false);
-    playbackDialog->resize(640, 340);
-    QVBoxLayout* playbackLayout = new QVBoxLayout(playbackDialog);
-    playbackLayout->setContentsMargins(20, 18, 20, 18);
-    playbackLayout->setSpacing(11);
-    playbackLayout->addWidget(makeLabel(tr("录像回放"), "appTitle"));
-    playbackLayout->addWidget(makeLabel(tr("选择设备通道后按时间范围请求 HLS 录像"), "subtitle"));
-    QFormLayout* playbackForm = new QFormLayout;
-    playbackForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-    playbackForm->addRow(tr("开始时间戳（ms）"), beginMs_);
-    playbackForm->addRow(tr("结束时间戳（ms）"), endMs_);
-    playbackLayout->addLayout(playbackForm);
-    QPushButton* playbackButton = new QPushButton(tr("播放录像"));
-    playbackButton->setProperty("role", "primary");
-    playbackLayout->addWidget(playbackButton);
-
     QDockWidget* logDock = new QDockWidget(tr("运行日志"), this);
     logDock->setObjectName("logDock");
     logDock->setAllowedAreas(Qt::BottomDockWidgetArea | Qt::TopDockWidgetArea);
@@ -398,9 +419,10 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     QAction* exitAction = fileMenu->addAction(tr("退出程序"));
 
     QMenu* deviceMenu = menuBar()->addMenu(tr("设备"));
+    deviceMenu->addAction(addDeviceAction);
     QAction* refreshAction = deviceMenu->addAction(tr("刷新设备"));
     refreshAction->setShortcut(QKeySequence("F5"));
-    QAction* deviceAction = deviceMenu->addAction(tr("设备配置..."));
+    QAction* deviceAction = deviceMenu->addAction(tr("编辑选中设备…"));
 
     QMenu* monitorMenu = menuBar()->addMenu(tr("监控"));
     QAction* previewAction = monitorMenu->addAction(tr("开始预览"));
@@ -432,6 +454,7 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     toolBar->setMovable(false);
     toolBar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     toolBar->addAction(connectionAction);
+    toolBar->addAction(addDeviceAction);
     toolBar->addAction(refreshAction);
     toolBar->addSeparator();
     toolBar->addAction(previewAction);
@@ -467,11 +490,6 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
     });
     log(tr("客户端配置：%1").arg(QDir::toNativeSeparators(clientSettingsPath())));
 
-    decoder_->moveToThread(&decoderThread_); connect(&decoderThread_, &QThread::finished, decoder_, &QObject::deleteLater);
-    connect(protocol_, &ProtocolClient::videoMetadata, decoder_, &VideoDecoder::configure);
-    connect(protocol_, &ProtocolClient::compressedVideoPacket, decoder_, &VideoDecoder::decode);
-    connect(decoder_, &VideoDecoder::frameReady, this, &MainWindow::showFrame);
-    connect(decoder_, &VideoDecoder::decoderError, this, &MainWindow::log); decoderThread_.start();
     player_.setVideoOutput(playbackView_);
 
     connect(connectButton, &QPushButton::clicked, this, [this] {
@@ -486,6 +504,7 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
         protocol_->login(username_->text(), password_->text()); });
     connect(refreshAction, &QAction::triggered, protocol_, &ProtocolClient::requestCameras);
     connect(emptyRefreshButton, &QPushButton::clicked, protocol_, &ProtocolClient::requestCameras);
+    connect(addDeviceAction, &QAction::triggered, this, &MainWindow::addDevice);
     connect(save, &QPushButton::clicked, this, &MainWindow::saveCamera);
     connect(previewAction, &QAction::triggered, this, [this, previewAction] {
         playLive(); previewAction->setChecked(tree_->currentItem() && tree_->currentItem()->parent()); });
@@ -495,26 +514,90 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
         startRecording(); recordAction->setChecked(tree_->currentItem() && tree_->currentItem()->parent()); });
     connect(stopRecordAction, &QAction::triggered, this, [this, recordAction] {
         stopRecording(); recordAction->setChecked(false); });
-    connect(playbackButton, &QPushButton::clicked, this, &MainWindow::playRecording);
     connect(themeAction_, &QAction::toggled, this, &MainWindow::applyTheme);
     connect(previewShrinkButton_, &QPushButton::clicked, this, [this] { adjustPreviewWidth(-1); });
     connect(previewDefaultButton, &QPushButton::clicked, this, &MainWindow::restoreDefaultMonitorLayout);
     connect(previewExpandButton_, &QPushButton::clicked, this, [this] { adjustPreviewWidth(1); });
     connect(previewMaximizeButton_, &QPushButton::clicked, this, &MainWindow::togglePreviewMaximized);
-    connect(monitorSplitter_, &QSplitter::splitterMoved, this, [this] { updatePreviewLayoutButtons(); updateLivePixmap(); });
+    connect(monitorSplitter_, &QSplitter::splitterMoved, this, [this] { updatePreviewLayoutButtons(); });
     connect(publisherStart_, &QPushButton::clicked, this, &MainWindow::startWebcamPublisher);
     connect(publisherStop_, &QPushButton::clicked, this, &MainWindow::stopWebcamPublisher);
     connect(connectionAction, &QAction::triggered, connectionDialog, [connectionDialog] {
         connectionDialog->show(); connectionDialog->raise(); connectionDialog->activateWindow(); });
-    connect(deviceAction, &QAction::triggered, deviceDialog, [deviceDialog] {
-        deviceDialog->show(); deviceDialog->raise(); deviceDialog->activateWindow(); });
+    connect(deviceAction, &QAction::triggered, this, [this, deviceDialog] {
+        CameraDeviceDto camera;
+        quint32 channel = 0;
+        if (!selection(camera, channel)) {
+            QMessageBox::information(this, tr("编辑设备"), tr("请先选择设备下的任意通道。"));
+            return;
+        }
+        cameraId_->setText(QString::number(camera.id));
+        cameraType_->setValue(int(camera.type));
+        channels_->setValue(int(camera.channels));
+        serial_->setText(camera.serialNumber);
+        cameraIp_->setText(camera.ip);
+        rtsp_->setText(camera.rtspUrl);
+        rtmp_->setText(camera.rtmpUrl);
+        deviceDialog->show(); deviceDialog->raise(); deviceDialog->activateWindow();
+    });
     connect(publisherAction, &QAction::triggered, publisherDialog, [publisherDialog] {
         publisherDialog->show(); publisherDialog->raise(); publisherDialog->activateWindow(); });
-    connect(playbackAction, &QAction::triggered, playbackDialog, [playbackDialog] {
-        playbackDialog->show(); playbackDialog->raise(); playbackDialog->activateWindow(); });
+    connect(playbackAction, &QAction::triggered, this, [this] {
+        RecordingBrowserDialog* browser = new RecordingBrowserDialog(protocol_, cameras_, this);
+        connect(protocol_, &ProtocolClient::playbackUrlReceived, browser,
+                [this, browser](const QUrl&) { browser->close(); });
+        browser->show();
+    });
     connect(exitAction, &QAction::triggered, this, &QWidget::close);
     connect(tree_, &QTreeWidget::itemDoubleClicked, this, [this, previewAction](QTreeWidgetItem* item, int) {
         if (item && item->parent()) { playLive(); previewAction->setChecked(true); }
+    });
+    connect(tree_, &QTreeWidget::customContextMenuRequested,
+            this, &MainWindow::showDeviceContextMenu);
+    connect(videoGrid_, &VideoGridWidget::message, this, &MainWindow::log);
+    connect(videoGrid_, &VideoGridWidget::previewCountChanged, this, [this](int count) {
+        setStatus(videoStatus_, count ? tr("画面：%1 路实时预览").arg(count) : tr("画面：未预览"),
+                  count ? "success" : "neutral");
+    });
+    connect(videoGrid_, &VideoGridWidget::previewStateChanged, this,
+            [this](quint32 cameraId, quint32 channel, bool active) {
+        for (int i = 0; i < tree_->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* root = tree_->topLevelItem(i);
+            if (root->data(0, Qt::UserRole).toUInt() != cameraId) continue;
+            for (int j = 0; j < root->childCount(); ++j) {
+                QTreeWidgetItem* item = root->child(j);
+                if (item->data(0, Qt::UserRole + 1).toUInt() != channel) continue;
+                item->setText(0, active ? tr("通道 %1 · 预览中").arg(channel)
+                                        : tr("通道 %1").arg(channel));
+                item->setData(0, Qt::UserRole + 2, active);
+                return;
+            }
+        }
+    });
+    connect(videoGrid_, &VideoGridWidget::activeTileChanged, this, [this](VideoTileWidget* tile) {
+        ptzGear_->setEnabled(tile && tile->camera().type == 1);
+        if (!tile) {
+            statusBar()->showMessage(tr("未选择活动视频"), 2500);
+            return;
+        }
+        statusBar()->showMessage(
+            tr("活动视频：%1 / 通道 %2").arg(tile->camera().serialNumber).arg(tile->channel()), 3500);
+    });
+    connect(videoGrid_, &VideoGridWidget::recordingRequested,
+            this, [this](VideoTileWidget* tile, bool start) {
+        if (!tile) return;
+        const CameraDeviceDto camera = tile->camera();
+        if (start)
+            protocol_->startRecording(camera.id, tile->channel(),
+                                      selectedStream(camera, tile->channel()));
+        else
+            protocol_->stopRecording(camera.id, tile->channel());
+    });
+    connect(videoGrid_, &VideoGridWidget::fullScreenRequested,
+            this, &MainWindow::enterVideoFullScreen);
+    connect(videoGrid_, &VideoGridWidget::tileAboutToRemove, this,
+            [this](VideoTileWidget* tile) {
+        if (tile && tile == fullScreenTile_) exitVideoFullScreen();
     });
     QDialog* runtimeInfoDialog = new QDialog(this);
     runtimeInfoDialog->setWindowTitle(tr("连接与运行信息"));
@@ -600,6 +683,14 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
         videoStack_->setCurrentWidget(playbackView_); player_.setMedia(QMediaContent(url)); player_.play();
         setStatus(videoStatus_, tr("画面：录像回放"), "info");
         log(tr("开始回放 %1").arg(url.toString())); });
+    connect(protocol_, &ProtocolClient::recordingOperationFinished, this,
+            [this](quint32 camera, quint32 channel, bool active,
+                   bool success, const QString& message) {
+        VideoTileWidget* tile = videoGrid_->tile(camera, channel);
+        if (tile) tile->setRecordingResult(active, success, message);
+        if (!success)
+            QMessageBox::warning(this, tr("录像操作失败"), message);
+    });
 
     connect(publisher_, &QProcess::started, this, [this] {
         publisherStart_->setEnabled(false); publisherStop_->setEnabled(true);
@@ -635,7 +726,7 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient, QWidget* parent)
 MainWindow::~MainWindow() {
     saveSettings();
     shuttingDown_ = true; stopWebcamPublisher();
-    protocol_->stopStream(); decoderThread_.quit(); decoderThread_.wait();
+    if (videoGrid_) videoGrid_->stopAll();
 }
 
 void MainWindow::loadSettings() {
@@ -653,12 +744,12 @@ void MainWindow::loadSettings() {
     rtsp_->setText(settings.value("camera/rtsp", "rtsp://mediamtx:8554/webcam").toString());
     rtmp_->setText(settings.value("camera/rtmp").toString());
     speed_->setValue(settings.value("ptz/speed", speed_->value()).toInt());
-    beginMs_->setText(settings.value("playback/beginMs", beginMs_->text()).toString());
-    endMs_->setText(settings.value("playback/endMs", endMs_->text()).toString());
     webcamDevice_->setText(settings.value("publisher/device", webcamDevice_->text()).toString());
     publishUrl_->setText(settings.value("publisher/url",
         QString("rtsp://%1:8554/webcam").arg(host_->text())).toString());
     autoPublish_->setChecked(settings.value("publisher/autoStart", true).toBool());
+    soundEffects_->setChecked(settings.value("appearance/soundEffects", true).toBool());
+    ptzGear_->setSoundEnabled(soundEffects_->isChecked());
     themeAction_->setChecked(settings.value("appearance/darkTheme", false).toBool());
     const QByteArray geometry = settings.value("appearance/windowGeometry").toByteArray();
     if (!geometry.isEmpty()) restoreGeometry(geometry);
@@ -679,11 +770,10 @@ void MainWindow::saveSettings() const {
     settings.setValue("camera/rtsp", rtsp_->text());
     settings.setValue("camera/rtmp", rtmp_->text());
     settings.setValue("ptz/speed", speed_->value());
-    settings.setValue("playback/beginMs", beginMs_->text());
-    settings.setValue("playback/endMs", endMs_->text());
     settings.setValue("publisher/device", webcamDevice_->text());
     settings.setValue("publisher/url", publishUrl_->text());
     settings.setValue("publisher/autoStart", autoPublish_->isChecked());
+    settings.setValue("appearance/soundEffects", soundEffects_->isChecked());
     settings.setValue("appearance/darkTheme", themeAction_->isChecked());
     settings.setValue("appearance/windowGeometry", saveGeometry());
     if (monitorSplitter_ && !layoutMaximized_)
@@ -720,7 +810,6 @@ void MainWindow::restoreDefaultMonitorLayout() {
     QSettings settings(clientSettingsPath(), QSettings::IniFormat);
     settings.remove("appearance/monitorSplitterState");
     updatePreviewLayoutButtons();
-    updateLivePixmap();
 }
 
 void MainWindow::adjustPreviewWidth(int direction) {
@@ -753,7 +842,6 @@ void MainWindow::adjustPreviewWidth(int direction) {
     }
     monitorSplitter_->setSizes(sizes);
     updatePreviewLayoutButtons();
-    updateLivePixmap();
 }
 
 void MainWindow::togglePreviewMaximized() {
@@ -780,11 +868,9 @@ void MainWindow::togglePreviewMaximized() {
             if (restoreSizes.size() == 3) monitorSplitter_->setSizes(restoreSizes);
             else restoreDefaultMonitorLayout();
             updatePreviewLayoutButtons();
-            updateLivePixmap();
         });
     }
     updatePreviewLayoutButtons();
-    updateLivePixmap();
 }
 
 void MainWindow::updatePreviewLayoutButtons() {
@@ -799,17 +885,6 @@ void MainWindow::updatePreviewLayoutButtons() {
     previewShrinkButton_->setEnabled(sizes[1] > monitorSplitter_->widget(1)->minimumWidth());
     previewExpandButton_->setEnabled(sizes[0] > devicesPanel_->minimumWidth() ||
                                      sizes[2] > controlPanel_->minimumWidth());
-}
-
-void MainWindow::updateLivePixmap() {
-    if (!liveView_ || lastFrame_.isNull()) return;
-    liveView_->setPixmap(QPixmap::fromImage(lastFrame_).scaled(
-        liveView_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-}
-
-void MainWindow::resizeEvent(QResizeEvent* event) {
-    QMainWindow::resizeEvent(event);
-    updateLivePixmap();
 }
 
 QString MainWindow::ffmpegExecutable() const {
@@ -853,6 +928,120 @@ void MainWindow::stopWebcamPublisher() {
     if (!shuttingDown_) log(tr("本机摄像头推流已停止，摄像头已释放"));
 }
 
+void MainWindow::addDevice() {
+    AddDeviceDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const CameraDeviceDto camera = dialog.device();
+    protocol_->saveCamera(camera);
+    log(tr("已向服务器提交设备“%1”，等待保存确认").arg(camera.serialNumber));
+    QTimer::singleShot(500, protocol_, &ProtocolClient::requestCameras);
+}
+
+void MainWindow::showDeviceContextMenu(const QPoint& position) {
+    QTreeWidgetItem* item = tree_->itemAt(position);
+    if (!item) return;
+    tree_->setCurrentItem(item);
+    QMenu menu(this);
+    QAction* preview = menu.addAction(tr("开始预览"));
+    QAction* stop = menu.addAction(tr("停止此通道预览"));
+    menu.addSeparator();
+    QAction* information = menu.addAction(tr("设备信息"));
+    QAction* reconnect = menu.addAction(tr("重新连接预览"));
+    QAction* remove = menu.addAction(tr("删除设备…"));
+    const bool channelItem = item->parent() != 0;
+    preview->setEnabled(channelItem);
+    stop->setEnabled(channelItem);
+    reconnect->setEnabled(channelItem);
+    QAction* chosen = menu.exec(tree_->viewport()->mapToGlobal(position));
+    if (chosen == preview) {
+        playLive();
+    } else if (chosen == stop) {
+        CameraDeviceDto camera;
+        quint32 channel = 0;
+        if (selection(camera, channel)) videoGrid_->removePreview(camera.id, channel);
+    } else if (chosen == reconnect) {
+        CameraDeviceDto camera;
+        quint32 channel = 0;
+        if (selection(camera, channel)) {
+            videoGrid_->removePreview(camera.id, channel);
+            videoGrid_->addPreview(camera, channel, host_->text(), quint16(port_->text().toUShort()),
+                                   username_->text(), password_->text());
+        }
+    } else if (chosen == information) {
+        const quint32 id = item->data(0, Qt::UserRole).toUInt();
+        for (int i = 0; i < cameras_.size(); ++i) {
+            if (cameras_[i].id != id) continue;
+            const CameraDeviceDto& camera = cameras_[i];
+            QMessageBox::information(this, tr("设备信息"),
+                tr("名称：%1\nID：%2\n地址：%3\n通道：%4\n类型：%5\n主码流：%6")
+                    .arg(camera.serialNumber).arg(camera.id).arg(camera.ip)
+                    .arg(camera.channels).arg(camera.type == 1 ? tr("球机") : tr("枪机"))
+                    .arg(selectedStream(camera)));
+            break;
+        }
+    } else if (chosen == remove) {
+        const quint32 id = item->data(0, Qt::UserRole).toUInt();
+        QString name = QString::number(id);
+        for (int i = 0; i < cameras_.size(); ++i)
+            if (cameras_[i].id == id) name = cameras_[i].serialNumber;
+        if (QMessageBox::warning(this, tr("删除设备"),
+                tr("确定删除设备“%1”吗？\n该设备的所有本地预览会先停止，历史录像文件不会被删除。")
+                    .arg(name),
+                QMessageBox::Yes | QMessageBox::Cancel,
+                QMessageBox::Cancel) == QMessageBox::Yes) {
+            videoGrid_->removeCamera(id);
+            protocol_->deleteCamera(id);
+        }
+    }
+}
+
+void MainWindow::enterVideoFullScreen(VideoTileWidget* tile) {
+    if (!tile) return;
+    if (fullScreenTile_) {
+        if (fullScreenTile_ == tile) { exitVideoFullScreen(); return; }
+        exitVideoFullScreen();
+    }
+    fullScreenTile_ = tile;
+    preVideoFullScreenState_ = windowState();
+    videoStack_->setCurrentWidget(videoGrid_);
+    videoGrid_->showOnly(tile);
+    devicesPanel_->hide();
+    controlPanel_->hide();
+    videoHeader_->hide();
+    menuBar()->hide();
+    statusBar()->hide();
+    const QList<QToolBar*> bars = findChildren<QToolBar*>();
+    for (int i = 0; i < bars.size(); ++i) bars[i]->hide();
+    showFullScreen();
+    tile->setFocus(Qt::OtherFocusReason);
+}
+
+void MainWindow::exitVideoFullScreen() {
+    if (!fullScreenTile_) return;
+    fullScreenTile_ = 0;
+    videoGrid_->showAll();
+    videoHeader_->show();
+    menuBar()->show();
+    statusBar()->show();
+    const QList<QToolBar*> bars = findChildren<QToolBar*>();
+    for (int i = 0; i < bars.size(); ++i) bars[i]->show();
+    if (!layoutMaximized_) {
+        devicesPanel_->show();
+        controlPanel_->show();
+    }
+    if (preVideoFullScreenState_.testFlag(Qt::WindowMaximized)) showMaximized();
+    else showNormal();
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+    if (event->key() == Qt::Key_Escape && fullScreenTile_) {
+        exitVideoFullScreen();
+        event->accept();
+        return;
+    }
+    QMainWindow::keyPressEvent(event);
+}
+
 void MainWindow::showCameras(const QVector<CameraDeviceDto>& cameras) {
     cameras_ = cameras; tree_->clear();
     deviceStack_->setCurrentIndex(cameras.isEmpty() ? 0 : 1);
@@ -884,46 +1073,51 @@ bool MainWindow::selection(CameraDeviceDto& camera, quint32& channel) const {
     for (int i = 0; i < cameras_.size(); ++i) if (cameras_[i].id == id) { camera = cameras_[i]; return true; }
     return false;
 }
+bool MainWindow::activeSelection(CameraDeviceDto& camera, quint32& channel) const {
+    VideoTileWidget* tile = videoGrid_ ? videoGrid_->activeTile() : 0;
+    if (!tile) return false;
+    camera = tile->camera();
+    channel = tile->channel();
+    return true;
+}
 QString MainWindow::selectedStream(const CameraDeviceDto& camera) const {
     return !camera.rtspUrl.isEmpty() ? camera.rtspUrl : camera.rtmpUrl;
 }
-void MainWindow::showFrame(const QImage& image) {
-    videoStack_->setCurrentWidget(liveView_);
-    lastFrame_ = image;
-    if (liveView_->property("previewState").toString() != QStringLiteral("active")) {
-        liveView_->setProperty("previewState", "active");
-        liveView_->style()->unpolish(liveView_);
-        liveView_->style()->polish(liveView_);
-    }
-    liveView_->setText(QString());
-    updateLivePixmap();
+QString MainWindow::selectedStream(const CameraDeviceDto& camera, quint32 channel) const {
+    QString url = selectedStream(camera);
+    url.replace(QStringLiteral("{channel}"), QString::number(channel), Qt::CaseInsensitive);
+    url.replace(QStringLiteral("%CHANNEL%"), QString::number(channel), Qt::CaseInsensitive);
+    return url;
 }
 void MainWindow::playLive() { CameraDeviceDto camera; quint32 channel;
     if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
-    player_.stop(); videoStack_->setCurrentWidget(liveView_);
-    setStatus(videoStatus_, tr("画面：实时预览"), "success");
-    protocol_->startStream(camera.id, selectedStream(camera)); }
-void MainWindow::stopLive() { protocol_->stopStream(); QMetaObject::invokeMethod(decoder_, "reset", Qt::QueuedConnection);
-    lastFrame_ = QImage(); liveView_->clear(); liveView_->setProperty("previewState", "idle");
-    liveView_->style()->unpolish(liveView_); liveView_->style()->polish(liveView_);
-    liveView_->setText(tr("◉\n\n尚未开始预览\n请选择左侧在线设备\n双击设备通道或点击“开始预览”"));
-    setStatus(videoStatus_, tr("画面：未预览"), "neutral"); }
+    if (selectedStream(camera).isEmpty()) {
+        log(tr("%1 没有可用的 RTSP/RTMP 地址").arg(camera.serialNumber));
+        return;
+    }
+    player_.stop();
+    videoStack_->setCurrentWidget(videoGrid_);
+    videoGrid_->addPreview(camera, channel, host_->text(), quint16(port_->text().toUShort()),
+                           username_->text(), password_->text()); }
+void MainWindow::stopLive() {
+    VideoTileWidget* tile = videoGrid_ ? videoGrid_->activeTile() : 0;
+    if (!tile) { log(tr("请先选择一个正在预览的视频格子")); return; }
+    videoGrid_->removePreview(tile);
+}
 void MainWindow::saveCamera() { CameraDeviceDto camera; camera.id = cameraId_->text().toUInt();
     camera.type = cameraType_->value(); camera.channels = channels_->value(); camera.serialNumber = serial_->text();
     camera.ip = cameraIp_->text(); camera.rtspUrl = rtsp_->text(); camera.rtmpUrl = rtmp_->text();
     saveSettings(); protocol_->saveCamera(camera); }
 void MainWindow::startRecording() { CameraDeviceDto camera; quint32 channel;
-    if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
-    protocol_->startRecording(camera.id, channel, selectedStream(camera)); }
+    if (!activeSelection(camera, channel)) { log(tr("请先选择一个活动视频")); return; }
+    protocol_->startRecording(camera.id, channel, selectedStream(camera, channel)); }
 void MainWindow::stopRecording() { CameraDeviceDto camera; quint32 channel;
-    if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
+    if (!activeSelection(camera, channel)) { log(tr("请先选择一个活动视频")); return; }
     protocol_->stopRecording(camera.id, channel); }
-void MainWindow::playRecording() { CameraDeviceDto camera; quint32 channel;
-    if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; }
-    saveSettings(); setStatus(videoStatus_, tr("画面：请求回放"), "warning");
-    protocol_->requestPlayback(camera.id, channel, beginMs_->text().toLongLong(), endMs_->text().toLongLong()); }
 void MainWindow::sendPtz(const QString& command) { CameraDeviceDto camera; quint32 channel;
-    if (!selection(camera, channel)) { log(tr("请先选择一个通道")); return; } protocol_->ptz(channel, command, speed_->value()); }
+    if (!activeSelection(camera, channel)) { log(tr("请先选择一个活动视频")); return; }
+    if (camera.type == 0) { log(tr("当前设备不支持云台控制")); return; }
+    protocol_->ptz(channel, command, speed_->value()); }
 void MainWindow::log(const QString& text) {
     logView_->appendPlainText(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss ") + text);
 }

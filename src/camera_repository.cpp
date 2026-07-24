@@ -61,6 +61,10 @@ bool InMemoryCameraRepository::find(std::uint32_t id, CameraDevice& output) {
     output = found->second;
     return true;
 }
+bool InMemoryCameraRepository::erase(std::uint32_t id) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return cameras_.erase(id) != 0;
+}
 
 std::vector<std::uint8_t> serialize_cameras(const std::vector<CameraDevice>& cameras) {
     if (cameras.size() > 100000) throw std::length_error("too many cameras");
