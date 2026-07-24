@@ -257,9 +257,10 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient,
     controlLayout->setContentsMargins(14, 13, 14, 14);
     controlLayout->setSpacing(10);
     controlLayout->addWidget(makeLabel(tr("设备控制"), "title"));
-    controlLayout->addWidget(makeLabel(tr("拖动齿轮控制方向，释放后自动停止"), "subtitle"));
+    controlLayout->addWidget(makeLabel(
+        tr("拖动齿轮控制方向；没有活动球机时仍可体验机械音效"), "subtitle"));
     ptzGear_ = new PtzGearControl;
-    ptzGear_->setEnabled(false);
+    ptzGear_->setEnabled(true);
     controlLayout->addWidget(ptzGear_, 0, Qt::AlignHCenter);
     soundEffects_ = new QCheckBox(tr("界面机械音效"));
     soundEffects_->setChecked(true);
@@ -592,9 +593,9 @@ MainWindow::MainWindow(ProtocolClient* authenticatedClient,
         }
     });
     connect(videoGrid_, &VideoGridWidget::activeTileChanged, this, [this](VideoTileWidget* tile) {
-        ptzGear_->setEnabled(tile && tile->camera().type == 1);
+        ptzGear_->setEnabled(true);
         if (!tile) {
-            statusBar()->showMessage(tr("未选择活动视频"), 2500);
+            statusBar()->showMessage(tr("未选择活动视频；齿轮当前仅提供本地音效反馈"), 2500);
             return;
         }
         statusBar()->showMessage(
